@@ -1,0 +1,999 @@
+<title>Fugue State</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=Alegreya+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    /* Layout: a one-screen instrument. Title bar, a wide scrolling score, the fugue's form ribbon,
+       then a control rail and a tools rail. Voice colours are Baroque pigments: ochre, madder, verdigris, lapis. */
+    --bg: #e8ebf0;
+    --roll: #f5f7fa;
+    --ink: #18202f;
+    --muted: #586174;
+    --rule: #c8ced9;
+    --grid: rgba(24, 32, 47, 0.075);
+    --accent: #2f3f9c;
+    --accent-ink: #ffffff;
+    --v0: #a86f0c;
+    --v1: #b0353b;
+    --v2: #17786a;
+    --v3: #3a46a8;
+    --display: "IM Fell English", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --body: "Alegreya Sans", "Gill Sans", "Segoe UI", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d111c; --roll: #121828; --ink: #e5e8f0; --muted: #949bb0; --rule: #273049;
+      --grid: rgba(229, 232, 240, 0.065); --accent: #8d9cf5; --accent-ink: #0d111c;
+      --v0: #e3b04b; --v1: #ea7072; --v2: #45c2aa; --v3: #8c98f2;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d111c; --roll: #121828; --ink: #e5e8f0; --muted: #949bb0; --rule: #273049;
+    --grid: rgba(229, 232, 240, 0.065); --accent: #8d9cf5; --accent-ink: #0d111c;
+    --v0: #e3b04b; --v1: #ea7072; --v2: #45c2aa; --v3: #8c98f2;
+    color-scheme: dark;
+  }
+
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.45; }
+  .app {
+    box-sizing: border-box; min-height: 100%; max-width: 1440px; margin: 0 auto;
+    display: flex; flex-direction: column; gap: 14px;
+    padding-block: 18px 16px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+
+  header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 24px; }
+  h1 { font-family: var(--display); font-weight: 400; font-size: clamp(32px, 4.4vw, 50px); line-height: 0.95; margin: 0; letter-spacing: 0.005em; text-wrap: balance; }
+  h1 i { font-style: italic; }
+  .tagline { margin: 6px 0 0; color: var(--muted); max-width: 60ch; }
+  .now { text-align: right; display: grid; gap: 2px; justify-items: end; }
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .fkey { font-family: var(--display); font-size: 28px; line-height: 1.05; }
+  .fmeta { font-size: 13.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .tokenrow { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 10px; font-size: 13px; }
+  .tokenrow code { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .link { border: 0; background: none; padding: 2px 0; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; font-size: 13.5px; }
+  .linkfield { width: min(440px, 100%); font-family: var(--mono); font-size: 12px; padding: 5px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--roll); color: var(--ink); box-sizing: border-box; }
+
+  .roll-wrap { position: relative; flex: 1 1 auto; min-height: 280px; background: var(--roll); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+  .roll-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: var(--muted); margin-top: -4px; }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .legend i { display: inline-block; width: 22px; height: 6px; border-radius: 2px; background: var(--ink); box-sizing: border-box; }
+  .legend .l-subj i { height: 8px; }
+  .legend .l-subj2 i { height: 8px; background: transparent; border: 2px solid var(--ink); }
+  .legend .l-cs i { opacity: 0.6; }
+  .legend .l-free i { opacity: 0.28; }
+  .legend .l-future i { opacity: 0.18; outline: 1px dashed var(--muted); outline-offset: 1px; }
+
+  .form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; }
+  .form-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+  #current { font-size: 15px; }
+  .strip { display: flex; gap: 3px; height: 50px; }
+  .seg {
+    position: relative; flex: 1 1 0; min-width: 0; box-sizing: border-box;
+    display: flex; flex-direction: column; justify-content: center; gap: 1px;
+    padding: 4px 7px; overflow: hidden;
+    background: var(--roll); border: 1px solid var(--rule); border-top: 3px solid var(--segc, var(--rule)); border-radius: 4px;
+  }
+  .seg .k { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1.2em; }
+  .seg .l { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seg.past { opacity: 0.5; }
+  .seg.on { border-color: var(--ink); border-top-color: var(--segc, var(--ink)); }
+  .seg.on::after { content: ""; position: absolute; left: 0; bottom: 0; height: 3px; width: calc(var(--p, 0) * 100%); background: var(--ink); }
+
+  .controls, .tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
+  .tools { align-items: flex-start; }
+  button, select, input { font: inherit; color: inherit; }
+  .play {
+    display: inline-flex; align-items: center; gap: 9px; height: 46px; padding: 0 20px 0 16px;
+    border: 0; border-radius: 999px; background: var(--accent); color: var(--accent-ink);
+    font-weight: 700; font-size: 15.5px; cursor: pointer;
+  }
+  .play svg { width: 16px; height: 16px; fill: currentColor; }
+  .btn { height: 40px; padding: 0 15px; border: 1px solid var(--rule); background: var(--roll); border-radius: 999px; cursor: pointer; }
+  .btn:disabled { opacity: 0.55; cursor: default; }
+  .btn[aria-pressed="true"] { background: var(--v1); border-color: var(--v1); color: var(--accent-ink); }
+  .tempo { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; }
+  .tempo input { width: 130px; accent-color: var(--accent); }
+  .tempo output { font-family: var(--mono); font-size: 12.5px; min-width: 4.5ch; font-variant-numeric: tabular-nums; }
+  .choice { display: inline-flex; border: 1px solid var(--rule); border-radius: 999px; overflow: hidden; background: var(--roll); }
+  .choice label { position: relative; padding: 9px 13px; font-size: 14px; cursor: pointer; }
+  .choice input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .choice label:has(input:checked) { background: var(--ink); color: var(--bg); }
+  .choice label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -3px; }
+  .group { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .voices { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+  .vt { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 12px 0 10px; border: 1px solid var(--rule); background: var(--roll); border-radius: 999px; cursor: pointer; font-size: 14px; }
+  .vt .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--vc); border: 2px solid var(--vc); box-sizing: border-box; }
+  .vt[aria-pressed="false"] { color: var(--muted); }
+  .vt[aria-pressed="false"] .dot { background: transparent; }
+  .vt[aria-pressed="false"] .nm { text-decoration: line-through; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .spacer { flex: 1 1 auto; }
+
+  .steer { flex: 1 1 520px; min-width: 0; border: 1px solid var(--rule); border-radius: 10px; background: var(--roll); }
+  .steer summary { cursor: pointer; padding: 10px 14px; font-weight: 500; list-style-position: inside; }
+  .steer[open] summary { border-bottom: 1px solid var(--rule); }
+  .steer-grid { display: flex; flex-wrap: wrap; gap: 12px 18px; padding: 12px 14px 4px; align-items: flex-end; }
+  .field { display: grid; gap: 4px; font-size: 12.5px; color: var(--muted); }
+  .field select { height: 34px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); font-size: 14px; }
+  .devices { border: 0; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12.5px; color: var(--muted); }
+  .devices legend { padding: 0; margin-bottom: 4px; }
+  .devices .opts { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--ink); font-size: 14px; }
+  .devices label { display: inline-flex; gap: 6px; align-items: center; }
+  .devices input { accent-color: var(--accent); }
+  .density input { width: 140px; accent-color: var(--accent); }
+  .density span { color: var(--ink); font-size: 14px; display: inline-flex; gap: 10px; align-items: center; }
+  .hint { margin: 0; padding: 6px 14px 12px; font-size: 12.5px; color: var(--muted); max-width: 80ch; }
+  .export { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+  .say { font-size: 13px; color: var(--muted); min-height: 1.2em; }
+
+  @media (max-width: 620px) {
+    .now { text-align: left; justify-items: start; }
+    .tokenrow { justify-content: flex-start; }
+    .strip { height: 44px; }
+    .seg .k { display: none; }
+    .seg { padding: 3px 4px; }
+    .seg .l { font-size: 11px; }
+    .spacer { display: none; }
+  }
+</style>
+
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>Fugue <i>State</i></h1>
+      <p class="tagline">A fugue that never ends. Each subject is written fresh and worked through exposition, episodes, inversion, augmentation and stretto, then dissolves into the next fugue without a pause.</p>
+    </div>
+    <div class="now" aria-live="polite">
+      <span class="eyebrow" id="fno">Fugue No. 1</span>
+      <span class="fkey" id="fkey">—</span>
+      <span class="fmeta" id="fmeta">—</span>
+      <span class="tokenrow"><code id="token" title="This fugue's token">—</code><button class="link" id="copyLink" type="button">Copy link to this fugue</button><button class="link" id="replay" type="button">Replay it</button></span>
+      <input class="linkfield" id="linkField" readonly hidden aria-label="Link to this fugue">
+    </div>
+  </header>
+
+  <div class="roll-wrap" id="rollWrap">
+    <canvas id="roll" role="img" aria-label="Scrolling piano roll of the voices. Notes to the right of the line are composed but not yet played."></canvas>
+  </div>
+  <div class="legend" aria-hidden="true">
+    <span class="l-subj"><i></i>Subject, answer, inversion</span>
+    <span class="l-subj2"><i></i>Second subject</span>
+    <span class="l-cs"><i></i>Countersubject and episode motif</span>
+    <span class="l-free"><i></i>Free counterpoint</span>
+    <span class="l-future"><i></i>Composed, not yet played</span>
+  </div>
+
+  <section class="form" aria-label="Form of the current fugue">
+    <div class="form-head"><span class="eyebrow">Now</span><span id="current">Press Play. The subject enters alone.</span></div>
+    <div class="strip" id="strip"></div>
+  </section>
+
+  <div class="controls">
+    <button class="play" id="play" type="button" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path id="playIcon" d="M3 1.8v12.4L14 8z"/></svg><span id="playLabel">Play</span></button>
+    <button class="btn" id="newFugue" type="button">Begin a new fugue</button>
+    <label class="tempo" for="tempo">Tempo <input type="range" id="tempo" min="60" max="140" step="5" value="100"><output id="tempoOut" for="tempo">100%</output></label>
+    <span class="group">Feel
+      <span class="choice" role="radiogroup" aria-label="Feel">
+        <label title="Exactly on the grid"><input type="radio" name="feel" id="feel-strict" value="strict">Strict</label>
+        <label title="Accents, phrasing and a little rubato"><input type="radio" name="feel" id="feel-human" value="human" checked>Human</label>
+        <label title="More shaping, more breath"><input type="radio" name="feel" id="feel-expressive" value="expressive">Expressive</label>
+      </span>
+    </span>
+    <span class="spacer"></span>
+    <div class="choice" role="radiogroup" aria-label="Instrument">
+      <label><input type="radio" name="inst" id="inst-organ" value="organ">Organ</label>
+      <label><input type="radio" name="inst" id="inst-harpsichord" value="harpsichord">Harpsichord</label>
+      <label><input type="radio" name="inst" id="inst-strings" value="strings">Strings</label>
+      <label><input type="radio" name="inst" id="inst-sine" value="sine" checked>Sine</label>
+    </div>
+    <span class="group">Room
+      <span class="choice" role="radiogroup" aria-label="Reverb">
+        <label><input type="radio" name="room" id="room-hall" value="hall">Hall</label>
+        <label><input type="radio" name="room" id="room-spring" value="spring" checked>Spring</label>
+        <label><input type="radio" name="room" id="room-dry" value="dry">Dry</label>
+      </span>
+    </span>
+    <div class="voices" id="voices" role="group" aria-label="Voices"></div>
+  </div>
+
+  <div class="tools">
+    <details class="steer" id="steerPanel">
+      <summary>Steer the next fugue</summary>
+      <div class="steer-grid">
+        <label class="field" for="steer-key">Key<select id="steer-key"><option value="">Auto</option></select></label>
+        <label class="field" for="steer-char">Subject<select id="steer-char"><option value="">Auto</option><option value="stately">Stately</option><option value="running">Running</option><option value="dotted">Dotted</option></select></label>
+        <label class="field" for="steer-voices">Voices<select id="steer-voices"><option value="">Auto</option><option value="3">Three</option><option value="4">Four</option></select></label>
+        <label class="field" for="steer-form">Form<select id="steer-form"><option value="">Auto</option><option value="single">Single fugue</option><option value="double">Double fugue</option></select></label>
+        <fieldset class="devices"><legend>Devices</legend>
+          <span class="opts">
+            <label><input type="checkbox" id="dev-inv" checked>Inversion</label>
+            <label><input type="checkbox" id="dev-aug" checked>Augmentation &amp; diminution</label>
+            <label><input type="checkbox" id="dev-str" checked>Stretto</label>
+          </span>
+        </fieldset>
+        <label class="field density" for="density">Texture <span><input type="range" id="density" min="0" max="4" step="1" value="2"><output id="densityOut" for="density">Balanced</output></span></label>
+      </div>
+      <p class="hint">Key, subject, voices, form and devices apply when the next fugue begins; “Begin a new fugue” brings it in sooner. Texture is live and reaches the music about three bars later, because the score is written that far ahead.</p>
+    </details>
+    <div class="export">
+      <span class="export" id="exportGroup" hidden>
+        <button class="btn" id="saveMidi" type="button">Save this fugue as MIDI</button>
+        <button class="btn" id="record" type="button" aria-pressed="false">Record audio</button>
+      </span>
+      <span class="say" id="say" role="status"></span>
+    </div>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script src="export.js"></script>
+<script>
+(() => {
+  'use strict';
+  const E = window.FugueEngine, X = window.FugueExport;
+  const VOICES = E.VOICES;
+  const $ = (id) => document.getElementById(id);
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const ARTIFACT_URL = 'https://claude.ai/artifact/4Ub9tcum9M6181T3TpxdSe';
+  const DENSITY_NAMES = ['Sparse', 'Light', 'Balanced', 'Busy', 'Florid'];
+
+  // ---------- per-viewer preferences ----------
+  const PREF_KEY = 'fugue-state-prefs';
+  let prefs = {};
+  try { prefs = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; } catch (e) { prefs = {}; }
+  const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch (e) { /* storage unavailable */ } };
+
+  // ---------- the stream of composed blocks ----------
+  const hashToken = location.hash.slice(1);
+  const fromLink = !!E.parseToken(hashToken);
+  const stream = new E.FugueStream(fromLink ? { token: hashToken } : { seed: (Math.random() * 4294967296) >>> 0 });
+  let blocks = [];
+  const byStep = new Map();
+  let notes = [];
+  const AHEAD = 48; // sixteenths composed beyond the playhead (about 3 bars)
+
+  function generateThrough(step) {
+    while (stream.step <= step) {
+      const b = stream.next();
+      blocks.push(b);
+      for (const n of b.notes) {
+        let a = byStep.get(n.start);
+        if (!a) byStep.set(n.start, (a = []));
+        a.push(n);
+        notes.push(n);
+      }
+    }
+  }
+  function blockAt(step) {
+    for (let i = blocks.length - 1; i >= 0; i--) if (blocks[i].start <= step) return blocks[i];
+    return blocks[0];
+  }
+  const heardFugue = () => (blockAt(Math.max(0, Math.floor(currentStep()))) || {}).fugue || stream.fugue;
+
+  let tempoMult = 1;
+  const FEEL = { strict: 0, human: 0.6, expressive: 1.1 };
+  let feel = FEEL.human;
+  const secPerStep = (step) => { const b = blockAt(step); return (60 / (E.stepBpm(b, step) * tempoMult) / 4) * E.rubato(b, step, feel); };
+
+  // ---------- audio ----------
+  const VEL = { subject: 1, answer: 1, inversion: 1, subject2: 1, motif: 0.9, cs: 0.84, pedal: 0.78, free: 0.66 };
+  const HALL_WET = { organ: 0.42, harpsichord: 0.24, strings: 0.32, sine: 0.36 };
+  const SPRING_WET = { organ: 0.3, harpsichord: 0.34, strings: 0.3, sine: 0.42 };
+  const PAN = [0.32, -0.12, 0.14, -0.3];
+  // How much of the dynamic shaping each instrument can show: an organ barely can.
+  const DYNAMIC_RANGE = { organ: 0.35, harpsichord: 0.5, strings: 1, sine: 0.9 };
+  const audio = {
+    ctx: null, inst: 'sine', room: 'spring', buses: [], muted: [false, false, false, false],
+    init() {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const ctx = (this.ctx = new AC({ latencyHint: 'playback' }));
+      const comp = (this.comp = ctx.createDynamicsCompressor());
+      comp.threshold.value = -16; comp.knee.value = 12; comp.ratio.value = 3.5; comp.attack.value = 0.01; comp.release.value = 0.3;
+      const master = ctx.createGain();
+      master.gain.value = 0.8;
+      master.connect(comp); comp.connect(ctx.destination);
+
+      // Hall: a long diffuse tail, darkened.
+      this.hall = ctx.createConvolver();
+      this.hall.buffer = this.hallImpulse(3.4);
+      const tone = ctx.createBiquadFilter();
+      tone.type = 'lowpass'; tone.frequency.value = 5200;
+      this.hallWet = ctx.createGain();
+      this.hall.connect(tone); tone.connect(this.hallWet); this.hallWet.connect(master);
+      // Spring: dispersive chirps recirculating down two springs per side, band-limited like a tank.
+      this.spring = ctx.createConvolver();
+      this.spring.buffer = this.springImpulse(2.6);
+      const hp = ctx.createBiquadFilter(), lp = ctx.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = 170;
+      lp.type = 'lowpass'; lp.frequency.value = 4300;
+      this.springWet = ctx.createGain();
+      this.spring.connect(hp); hp.connect(lp); lp.connect(this.springWet); this.springWet.connect(master);
+      this.applyRoom(0);
+
+      for (let v = 0; v < 4; v++) {
+        const g = ctx.createGain();
+        g.gain.value = this.muted[v] ? 0 : 1;
+        const p = ctx.createStereoPanner();
+        p.pan.value = PAN[v];
+        g.connect(p); p.connect(master); p.connect(this.hall); p.connect(this.spring);
+        this.buses.push(g);
+      }
+      const wave = (amps) => {
+        const real = new Float32Array(amps.length + 1), imag = new Float32Array(amps.length + 1);
+        amps.forEach((a, i) => { imag[i + 1] = a; });
+        return ctx.createPeriodicWave(real, imag);
+      };
+      this.waves = {
+        organ: wave([1, 0.55, 0.32, 0.22, 0.1, 0.08, 0.05, 0.035, 0.02]),
+        octave: wave([1, 0.25, 0.08]),
+        harpsichord: wave(Array.from({ length: 48 }, (_, i) => Math.abs(Math.sin(Math.PI * (i + 1) * 0.13)) / Math.pow(i + 1, 0.75))),
+      };
+      const len = ctx.sampleRate;
+      this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
+      const d = this.noise.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    },
+    hallImpulse(sec) {
+      const ctx = this.ctx, sr = ctx.sampleRate, len = Math.floor(sr * sec);
+      const buf = ctx.createBuffer(2, len, sr);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = buf.getChannelData(ch);
+        for (let i = 0; i < len; i++) {
+          const x = i / len, fade = i < sr * 0.012 ? i / (sr * 0.012) : 1;
+          d[i] = (Math.random() * 2 - 1) * Math.pow(1 - x, 4.2) * fade;
+        }
+      }
+      return buf;
+    },
+    springImpulse(sec) {
+      const ctx = this.ctx, sr = ctx.sampleRate, len = Math.floor(sr * sec);
+      const buf = ctx.createBuffer(2, len, sr);
+      const springs = [[0.0331, 0.0447], [0.0379, 0.0412]]; // round-trip times, two springs per side
+      for (let ch = 0; ch < 2; ch++) {
+        const d = buf.getChannelData(ch);
+        for (const T of springs[ch]) {
+          for (let k = 0; 0.004 + k * T < sec; k++) {
+            const start = Math.floor((0.004 + k * T) * sr);
+            const amp = Math.pow(0.8, k) * 0.5;
+            const n = Math.floor(Math.min(0.06, 0.008 * (k + 1)) * sr); // each pass disperses the chirp further
+            let phase = 0;
+            for (let i = 0; i < n && start + i < len; i++) {
+              const x = i / n;
+              phase += (2 * Math.PI * 4200 * Math.pow(180 / 4200, x)) / sr;
+              d[start + i] += amp * Math.sin(phase) * Math.sin(Math.PI * x);
+            }
+          }
+        }
+        for (let i = 0; i < len; i++) d[i] += (Math.random() * 2 - 1) * 0.05 * Math.exp(-i / (sr * 0.7));
+      }
+      return buf;
+    },
+    applyRoom(ramp) {
+      if (!this.ctx) return;
+      const t = this.ctx.currentTime, tc = ramp == null ? 0.2 : ramp || 0.001;
+      this.hallWet.gain.setTargetAtTime(this.room === 'hall' ? HALL_WET[this.inst] : 0, t, tc);
+      this.springWet.gain.setTargetAtTime(this.room === 'spring' ? SPRING_WET[this.inst] : 0, t, tc);
+    },
+    setInstrument(name) { this.inst = name; this.applyRoom(); },
+    setRoom(name) { this.room = name; this.applyRoom(); },
+    setMuted(v, m) {
+      this.muted[v] = m;
+      if (this.ctx) this.buses[v].gain.setTargetAtTime(m ? 0 : 1, this.ctx.currentTime, 0.04);
+    },
+    note(v, midi, t, d, vel, cents) {
+      const f = 440 * Math.pow(2, (midi - 69) / 12);
+      const bus = this.buses[v];
+      // Fixed-pitch instruments stay in tune; strings and the sine drift a few cents.
+      const fd = f * Math.pow(2, (cents || 0) / 1200);
+      if (this.inst === 'harpsichord') this.harpsichord(bus, f, midi, t, d, 0.17 * vel);
+      else if (this.inst === 'strings') this.strings(bus, fd, t, d, 0.075 * vel, cents || 0);
+      else if (this.inst === 'sine') this.sine(bus, fd, midi, t, d, 0.17 * vel);
+      else this.organ(bus, f, t, d, 0.115 * vel);
+    },
+    burst(bus, t, dur, type, freq, q, level) {
+      const ctx = this.ctx, src = ctx.createBufferSource(), flt = ctx.createBiquadFilter(), g = ctx.createGain();
+      src.buffer = this.noise;
+      flt.type = type; flt.frequency.value = freq; flt.Q.value = q;
+      g.gain.setValueAtTime(level, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      src.connect(flt); flt.connect(g); g.connect(bus);
+      src.start(t, Math.random() * 0.8, dur + 0.02);
+    },
+    organ(bus, f, t, d, a) {
+      const ctx = this.ctx, end = t + Math.max(0.05, d * 0.94);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(a, t + 0.028);
+      g.gain.setValueAtTime(a, end);
+      g.gain.linearRampToValueAtTime(0, end + 0.08);
+      g.connect(bus);
+      const o1 = ctx.createOscillator(), o2 = ctx.createOscillator(), g2 = ctx.createGain();
+      o1.setPeriodicWave(this.waves.organ); o1.frequency.value = f;
+      o2.setPeriodicWave(this.waves.octave); o2.frequency.value = f * 2; o2.detune.value = 3;
+      g2.gain.value = 0.32;
+      o1.connect(g); o2.connect(g2); g2.connect(g);
+      o1.start(t); o2.start(t); o1.stop(end + 0.12); o2.stop(end + 0.12);
+      this.burst(bus, t, 0.05, 'bandpass', Math.min(9000, f * 4), 3, a * 0.45);
+    },
+    harpsichord(bus, f, midi, t, d, a) {
+      const ctx = this.ctx, end = t + Math.max(0.05, d * 0.92);
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.Q.value = 0.6;
+      lp.frequency.setValueAtTime(Math.min(15000, f * 16), t);
+      lp.frequency.setTargetAtTime(Math.min(9000, f * 4 + 600), t + 0.01, 0.3);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(a, t + 0.003);
+      g.gain.setTargetAtTime(0, t + 0.004, 1.3 * Math.pow(2, -(midi - 48) / 28));
+      g.gain.setTargetAtTime(0, end, 0.04);
+      lp.connect(g); g.connect(bus);
+      const o1 = ctx.createOscillator(), o2 = ctx.createOscillator();
+      o1.setPeriodicWave(this.waves.harpsichord); o2.setPeriodicWave(this.waves.harpsichord);
+      o1.frequency.value = f; o2.frequency.value = f; o2.detune.value = 5;
+      o1.connect(lp); o2.connect(lp);
+      o1.start(t); o2.start(t); o1.stop(end + 0.35); o2.stop(end + 0.35);
+      this.burst(bus, t, 0.015, 'highpass', 2500, 0.7, a * 0.35);
+    },
+    strings(bus, f, t, d, a, cents) {
+      const ctx = this.ctx, end = t + Math.max(0.08, d * 0.97);
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.Q.value = 0.5; lp.frequency.value = Math.min(7000, f * 5);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(a, t + 0.08);
+      g.gain.setValueAtTime(a, end);
+      g.gain.setTargetAtTime(0, end, 0.09);
+      lp.connect(g); g.connect(bus);
+      const o1 = ctx.createOscillator(), o2 = ctx.createOscillator(), lfo = ctx.createOscillator(), lg = ctx.createGain();
+      o1.type = o2.type = 'sawtooth';
+      o1.frequency.value = f; o2.frequency.value = f; o1.detune.value = -5; o2.detune.value = 6;
+      lfo.frequency.value = 5.3 + (cents || 0) * 0.08; // each note's vibrato a touch different
+      lg.gain.setValueAtTime(0, t);
+      lg.gain.linearRampToValueAtTime(f * 0.0045, t + 0.35);
+      lfo.connect(lg); lg.connect(o1.frequency); lg.connect(o2.frequency);
+      o1.connect(lp); o2.connect(lp);
+      for (const o of [o1, o2, lfo]) { o.start(t); o.stop(end + 0.5); }
+    },
+    // A pure sine with a soft attack and a gentle decay to sustain; low notes are lifted
+    // a little because a lone fundamental reads quieter down there.
+    sine(bus, f, midi, t, d, a) {
+      const ctx = this.ctx, end = t + Math.max(0.05, d * 0.95);
+      const lift = midi < 50 ? 1.5 : midi < 60 ? 1.2 : 1;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(a * lift, t + 0.012);
+      g.gain.setTargetAtTime(a * lift * 0.78, t + 0.012, 0.25);
+      g.gain.setTargetAtTime(0, end, 0.05);
+      g.connect(bus);
+      const o = ctx.createOscillator();
+      o.type = 'sine'; o.frequency.value = f;
+      o.connect(g);
+      o.start(t); o.stop(end + 0.4);
+    },
+  };
+
+  // ---------- scheduler (worker-driven so a background tab keeps playing) ----------
+  const sched = { nextStep: 0, nextTime: 0, times: [] };
+  let playing = false, started = false, lastPrune = 0;
+
+  function tick() {
+    const ctx = audio.ctx;
+    if (!ctx || !playing || ctx.state !== 'running') return;
+    const now = ctx.currentTime, ahead = document.hidden ? 1.6 : 0.3;
+    if (sched.nextTime < now) sched.nextTime = now + 0.03;
+    while (sched.nextTime < now + ahead) {
+      generateThrough(sched.nextStep + AHEAD);
+      const step = sched.nextStep, list = byStep.get(step);
+      if (list) {
+        const b = blockAt(step);
+        // Harpsichordists roll big downbeat chords from the bass up.
+        const roll = feel && audio.inst === 'harpsichord' && list.length >= 3 && (step - b.start) % 16 === 0;
+        list.sort((x, y) => y.voice - x.voice).forEach((n, rank) => {
+          let d = 0;
+          for (let i = 0; i < n.dur; i++) d += secPerStep(n.start + i);
+          const tm = E.timing(n, b, feel);
+          const shape = 1 + (E.expression(n, b, feel) - 1) * DYNAMIC_RANGE[audio.inst];
+          const t = Math.max(now + 0.005, sched.nextTime + tm.dt + (roll ? rank * 0.011 * feel : 0));
+          audio.note(n.voice, n.midi, t, d * tm.gate, (VEL[n.tag] || 0.7) * shape, tm.cents);
+        });
+        byStep.delete(step);
+      }
+      sched.times.push(step, sched.nextTime);
+      sched.nextTime += secPerStep(step);
+      sched.nextStep++;
+    }
+    if (sched.times.length > 4096) sched.times.splice(0, sched.times.length - 2048);
+    if (sched.nextStep - lastPrune > 256) {
+      lastPrune = sched.nextStep;
+      const keep = sched.nextStep - 512;
+      notes = notes.filter((n) => n.start + n.dur > keep);
+      const cur = blocks.findIndex((b) => b.start + b.len > keep);
+      if (cur > 0) blocks = blocks.slice(cur);
+    }
+  }
+
+  let ticker = null;
+  function startTicker() {
+    if (ticker) return;
+    try {
+      const src = 'let id=null;onmessage=e=>{clearInterval(id);if(e.data==="go")id=setInterval(()=>postMessage(0),25)}';
+      const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+      w.onmessage = tick;
+      w.postMessage('go');
+      ticker = w;
+    } catch (e) {
+      ticker = { id: setInterval(tick, 25) };
+    }
+  }
+
+  function currentStep() {
+    const T = sched.times;
+    if (!audio.ctx || !T.length) return -0.01;
+    const now = audio.ctx.currentTime - (audio.ctx.outputLatency || audio.ctx.baseLatency || 0);
+    for (let i = T.length - 2; i >= 0; i -= 2) {
+      if (T[i + 1] <= now) {
+        const s = T[i], t = T[i + 1];
+        const nt = i + 3 < T.length ? T[i + 3] : t + secPerStep(s);
+        return s + Math.min(1, (now - t) / (nt - t));
+      }
+    }
+    return T[0] - 0.01;
+  }
+
+  // ---------- status line ----------
+  let sayTimer = null;
+  function say(msg, sticky) {
+    const el = $('say');
+    el.textContent = msg;
+    clearTimeout(sayTimer);
+    if (!sticky) sayTimer = setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 6000);
+  }
+
+  // ---------- transport ----------
+  const playBtn = $('play');
+  async function togglePlay() {
+    if (!audio.ctx) audio.init();
+    if (!playing) {
+      try { await audio.ctx.resume(); } catch (e) { /* resume refused; the button stays on Play */ }
+      if (audio.ctx.state !== 'running') return;
+      if (!started) { started = true; sched.nextTime = audio.ctx.currentTime + 0.12; }
+      playing = true;
+      startTicker();
+      tick();
+    } else {
+      playing = false;
+      try { await audio.ctx.suspend(); } catch (e) { /* ignore */ }
+    }
+    playBtn.setAttribute('aria-pressed', String(playing));
+    $('playLabel').textContent = playing ? 'Pause' : started ? 'Resume' : 'Play';
+    $('playIcon').setAttribute('d', playing ? 'M3 2h3.6v12H3zM9.4 2H13v12H9.4z' : 'M3 1.8v12.4L14 8z');
+  }
+  playBtn.addEventListener('click', togglePlay);
+  document.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' || e.repeat) return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (['INPUT', 'BUTTON', 'TEXTAREA', 'SELECT', 'SUMMARY'].includes(tag)) return;
+    e.preventDefault();
+    togglePlay();
+  });
+
+  const newBtn = $('newFugue');
+  let pendingFrom = null;
+  newBtn.addEventListener('click', () => {
+    // The stream composes ahead, so the fugue being heard may already be finished on paper.
+    const heard = heardFugue();
+    const ok = heard === stream.fugue && stream.requestNewFugue();
+    pendingFrom = heard.no;
+    newBtn.disabled = true;
+    newBtn.textContent = ok ? 'Winding down to a cadence…' : 'The next fugue is on its way…';
+  });
+
+  $('tempo').addEventListener('input', (e) => {
+    tempoMult = +e.target.value / 100;
+    $('tempoOut').textContent = e.target.value + '%';
+    shown = null;
+  });
+
+  function bindRadios(name, current, apply) {
+    document.querySelectorAll(`input[name="${name}"]`).forEach((r) => {
+      if (r.value === current) r.checked = true;
+      r.addEventListener('change', (e) => { apply(e.target.value); prefs[name] = e.target.value; savePrefs(); });
+    });
+  }
+  if (prefs.inst) audio.inst = prefs.inst;
+  if (prefs.room) audio.room = prefs.room;
+  bindRadios('inst', audio.inst, (v) => audio.setInstrument(v));
+  bindRadios('room', audio.room, (v) => audio.setRoom(v));
+  if (prefs.feel && FEEL[prefs.feel] != null) feel = FEEL[prefs.feel];
+  bindRadios('feel', prefs.feel || 'human', (v) => { feel = FEEL[v]; });
+
+  const voiceWrap = $('voices');
+  VOICES.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'vt'; b.id = 'voice-' + i;
+    b.setAttribute('aria-pressed', 'true');
+    b.style.setProperty('--vc', `var(--v${i})`);
+    b.innerHTML = `<span class="dot"></span><span class="nm">${v.name}</span>`;
+    b.addEventListener('click', () => {
+      const on = b.getAttribute('aria-pressed') !== 'true';
+      b.setAttribute('aria-pressed', String(on));
+      audio.setMuted(i, !on);
+    });
+    voiceWrap.appendChild(b);
+  });
+
+  // ---------- steering ----------
+  const keySel = $('steer-key');
+  for (let t = 0; t < 12; t++) for (const mode of ['major', 'minor']) {
+    const o = document.createElement('option');
+    o.value = t + '-' + mode;
+    o.textContent = E.keyName({ tonic: t, mode });
+    keySel.appendChild(o);
+  }
+  const steerFields = { key: keySel, character: $('steer-char'), voices: $('steer-voices'), form: $('steer-form') };
+  const devBoxes = [$('dev-inv'), $('dev-aug'), $('dev-str')];
+  const saved = prefs.steer || {};
+  for (const [k, el] of Object.entries(steerFields)) if (saved[k] != null) el.value = String(saved[k]);
+  if (saved.devices != null) devBoxes.forEach((b, i) => { b.checked = !!(saved.devices & (1 << i)); });
+  function applySteer() {
+    const kv = keySel.value;
+    const devices = devBoxes.reduce((m, b, i) => m | (b.checked ? 1 << i : 0), 0);
+    stream.steer = {
+      key: kv ? { tonic: +kv.split('-')[0], mode: kv.split('-')[1] } : null,
+      character: steerFields.character.value || null,
+      voices: steerFields.voices.value ? +steerFields.voices.value : null,
+      form: steerFields.form.value || null,
+      devices,
+    };
+    prefs.steer = { key: kv, character: steerFields.character.value, voices: steerFields.voices.value, form: steerFields.form.value, devices };
+    savePrefs();
+  }
+  [keySel, steerFields.character, steerFields.voices, steerFields.form, ...devBoxes].forEach((el) => el.addEventListener('change', () => {
+    applySteer();
+    say('Saved. It applies when the next fugue begins.');
+  }));
+  applySteer();
+  const densityEl = $('density');
+  if (!fromLink && prefs.density != null) { densityEl.value = prefs.density; stream.density = +prefs.density; }
+  else densityEl.value = stream.density;
+  $('densityOut').textContent = DENSITY_NAMES[+densityEl.value];
+  densityEl.addEventListener('input', () => {
+    stream.density = +densityEl.value;
+    $('densityOut').textContent = DENSITY_NAMES[stream.density];
+    prefs.density = stream.density;
+    savePrefs();
+  });
+
+  // ---------- sharing ----------
+  // Inside the claude.ai viewer the frame's own address isn't shareable; anywhere else it is.
+  const shareBase = () => (window.claude ? ARTIFACT_URL : location.href.split('#')[0]);
+  const linkFor = (fg) => shareBase() + '#' + fg.token;
+  $('copyLink').addEventListener('click', () => {
+    const url = linkFor(heardFugue()), field = $('linkField');
+    field.value = url;
+    field.hidden = false;
+    const fallback = () => { field.focus(); field.select(); say('Select the link and copy it.'); };
+    try {
+      navigator.clipboard.writeText(url).then(() => say('Link copied. It opens this fugue for anyone the page is shared with.'), fallback);
+    } catch (e) { fallback(); }
+  });
+  $('replay').addEventListener('click', () => {
+    const heard = heardFugue();
+    stream.pending = Object.assign({}, heard.params);
+    if (heard === stream.fugue && stream.requestNewFugue()) say('Winding down. Fugue No. ' + heard.no + ' starts again after the cadence.', true);
+    else say('It replays straight after the fugue that is already on its way.', true);
+  });
+
+  // ---------- exports ----------
+  let downloads = null;
+  const exportGroup = $('exportGroup');
+  function initDownloads() {
+    if (window.claude && typeof window.claude.use === 'function') {
+      window.claude.use('downloads').then((d) => { downloads = d; exportGroup.hidden = !d; }, () => { exportGroup.hidden = true; });
+    } else {
+      exportGroup.hidden = false; // outside the viewer (GitHub Pages, disk): plain download links work
+    }
+  }
+  if (document.readyState === 'complete') initDownloads(); else window.addEventListener('load', initDownloads);
+
+  async function saveFile(name, blob) {
+    if (downloads) {
+      try {
+        await downloads.save({ filename: name, data: blob });
+        say('Saved ' + name);
+      } catch (e) {
+        const code = e && e.code;
+        say(code === 'declined' ? 'Save cancelled.'
+          : code === 'rate_limited' ? 'Another save is still waiting for an answer.'
+          : code === 'extension_not_enabled' ? 'This view does not allow ' + name.split('.').pop().toUpperCase() + ' downloads.'
+          : 'Saving files is not available here.');
+      }
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    say('Saved ' + name);
+  }
+  $('saveMidi').addEventListener('click', () => {
+    const fg = heardFugue();
+    try {
+      const out = X.fugueZip(E, fg.token, { instrument: audio.inst, link: linkFor(fg), feel });
+      saveFile(out.filename, new Blob([out.data], { type: 'application/zip' }));
+    } catch (e) {
+      say('Could not write the MIDI file: ' + (e && e.message));
+    }
+  });
+
+  let rec = null, recChunks = [], recStart = 0, recMime = '';
+  const recBtn = $('record');
+  recBtn.addEventListener('click', () => {
+    if (rec) { rec.stop(); return; }
+    if (!audio.ctx || !playing) { say('Press Play first, then record.'); return; }
+    recMime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
+    if (!recMime) { say('This browser cannot record audio from the page.'); return; }
+    if (!audio.tap) { audio.tap = audio.ctx.createMediaStreamDestination(); audio.comp.connect(audio.tap); }
+    try { rec = new MediaRecorder(audio.tap.stream, { mimeType: recMime }); } catch (e) { say('Recording could not start.'); rec = null; return; }
+    recChunks = [];
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
+    rec.onstop = () => {
+      const ext = recMime.includes('mp4') ? 'mp4' : 'webm';
+      const blob = new Blob(recChunks, { type: recMime.split(';')[0] });
+      const fg = heardFugue();
+      rec = null;
+      recBtn.setAttribute('aria-pressed', 'false');
+      recBtn.textContent = 'Record audio';
+      saveFile(`fugue-state-${fg.token}.${ext}`, blob);
+    };
+    rec.start(1000);
+    recStart = performance.now();
+    recBtn.setAttribute('aria-pressed', 'true');
+  });
+
+  // ---------- form strip and header ----------
+  const strip = $('strip');
+  const keyVoice = (s) => E.keyName(s.key) + ' · ' + VOICES[s.voice].name;
+  function secParts(s, i, secs) {
+    const firstOf = (g) => secs.findIndex((x) => x.group === g) === i;
+    if (s.type === 'entry') {
+      if (s.group === 'exposition') return [firstOf('exposition') ? 'Exposition' : '', s.title];
+      if (s.group === 'exposition2') return [firstOf('exposition2') ? 'Subject II' : '', VOICES[s.voice].name + ' · ' + E.keyName(s.key)];
+      if (s.form === 'combined') return ['Double entry', E.keyName(s.key)];
+      if (s.form === 'inversion') return ['Inversion', keyVoice(s)];
+      if (s.form === 'augmentation') return ['Augmentation', keyVoice(s)];
+      if (s.form === 'diminution') return ['Diminution', E.keyName(s.key)];
+      return [s.group === 'final' ? 'Final entry' : 'Middle entry', keyVoice(s)];
+    }
+    if (s.type === 'episode') return ['Episode', 'to ' + E.keyName(s.to)];
+    if (s.type === 'dompedal') return ['Pedal', 'on the dominant'];
+    if (s.type === 'stretto') {
+      const who = [s.leader, s.follower, s.third].filter((v) => v != null).map((v) => VOICES[v].short).join(' + ');
+      return [s.third != null ? 'Stretto · 3 voices' : s.inv ? 'Stretto · inverted' : 'Stretto', who + ', ' + s.d / 4 + ' beats apart'];
+    }
+    return ['Close', s.pivot ? 'Pivot to ' + E.keyName(s.pivot) : 'Tonic pedal'];
+  }
+  function segColor(s) {
+    if (s.type === 'entry') return `var(--v${s.voice})`;
+    if (s.type === 'stretto') return `var(--v${s.leader})`;
+    if (s.type === 'cadence' || s.type === 'dompedal') return 'var(--v3)';
+    return '';
+  }
+  let stripFor = null, stripSecs = null;
+  function buildStrip(fg) {
+    strip.textContent = '';
+    fg.sections.forEach((s, i) => {
+      const el = document.createElement('div');
+      el.className = 'seg';
+      el.style.flexGrow = E.sectionLength(s);
+      const c = segColor(s);
+      if (c) el.style.setProperty('--segc', c);
+      const [k, l] = secParts(s, i, fg.sections);
+      el.title = (k ? k + ': ' : '') + l;
+      el.innerHTML = '<span class="k"></span><span class="l"></span>';
+      el.children[0].textContent = k;
+      el.children[1].textContent = l;
+      strip.appendChild(el);
+    });
+    stripFor = fg; stripSecs = fg.sections;
+  }
+  const lc = (v) => VOICES[v].name.toLowerCase();
+  function describe(b) {
+    const s = b.sec, fg = b.fugue;
+    if (s.type === 'entry') {
+      const where = E.keyName(s.key);
+      if (s.form === 'answer') return `${fg && fg.answer ? 'Tonal answer' : 'Answer'} in the ${lc(s.voice)}, ${where}${s.cs != null ? `, countersubject in the ${lc(s.cs)}` : ''}`;
+      if (s.form === 'inversion') return `Subject upside down in the ${lc(s.voice)}, ${where}`;
+      if (s.form === 'augmentation') return `Subject in augmentation, twice as slow, in the ${lc(s.voice)}, ${where}`;
+      if (s.form === 'diminution') return `Subject in diminution, twice as fast: ${lc(s.voice)}, then ${lc(s.voice2)}, ${where}`;
+      if (s.form === 'subject2') return `Second subject in the ${lc(s.voice)}, ${where}`;
+      if (s.form === 'combined') return `Both subjects at once: first in the ${lc(s.voice)}, second in the ${lc(s.voice2)}, ${where}`;
+      const cs = s.cs != null ? `, countersubject in the ${lc(s.cs)}` : s.group === 'exposition' ? ', alone' : '';
+      return `Subject in the ${lc(s.voice)}, ${where}${cs}`;
+    }
+    if (s.type === 'episode') return `Episode: a fragment of the subject in sequence, modulating to ${E.keyName(s.to)}`;
+    if (s.type === 'dompedal') return 'Dominant pedal: the bass holds while the upper voices build toward the return';
+    if (s.type === 'stretto') {
+      if (s.third != null) return `Stretto in three voices, each entering ${s.d / 4} beats after the last`;
+      return `Stretto${s.inv ? ' by inversion' : ''}: the subject against itself, ${s.d / 4} beats apart`;
+    }
+    if (s.pivot) return `Cadence that pivots to ${E.keyName(s.pivot)} for the next fugue`;
+    return 'Tonic pedal and cadence. The next fugue enters on the final chord.';
+  }
+  const NUM = ['', '', 'two', 'three', 'four'];
+  let shown = null;
+  function updateText(cur) {
+    const b = blockAt(Math.max(0, Math.floor(cur)));
+    if (!b) return;
+    const fg = b.fugue;
+    if (fg && (fg !== stripFor || fg.sections !== stripSecs)) buildStrip(fg);
+    const p = Math.min(1, Math.max(0, (cur - b.start) / b.len));
+    [...strip.children].forEach((el, i) => {
+      el.classList.toggle('on', i === b.secIdx);
+      el.classList.toggle('past', i < b.secIdx);
+      if (i === b.secIdx) el.style.setProperty('--p', p.toFixed(3));
+    });
+    if (rec) recBtn.textContent = 'Stop recording ' + fmtTime((performance.now() - recStart) / 1000);
+    if (shown === b) return;
+    shown = b;
+    if (fg) {
+      $('fno').textContent = 'Fugue No. ' + fg.no;
+      $('fkey').textContent = (fg.form === 'double' ? 'Double fugue in ' : '') + E.keyName(fg.key);
+      $('fmeta').textContent = `${fg.character[0].toUpperCase() + fg.character.slice(1)} subject · ${NUM[fg.voices.length]} voices · ♩ = ${Math.round(fg.bpm * tempoMult)}`;
+      $('token').textContent = fg.token;
+    }
+    if (started) $('current').textContent = describe(b);
+    if (pendingFrom != null && fg && fg.no > pendingFrom) {
+      pendingFrom = null;
+      newBtn.disabled = false;
+      newBtn.textContent = 'Begin a new fugue';
+    }
+  }
+  const fmtTime = (s) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+
+  // ---------- piano roll ----------
+  const canvas = $('roll'), g2 = canvas.getContext('2d');
+  let W = 0, H = 0, dpr = 1, colors = {};
+  function readColors() {
+    const cs = getComputedStyle(document.documentElement);
+    const v = (n) => cs.getPropertyValue(n).trim();
+    colors = { roll: v('--roll'), ink: v('--ink'), muted: v('--muted'), grid: v('--grid'), rule: v('--rule'), voice: [v('--v0'), v('--v1'), v('--v2'), v('--v3')] };
+  }
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    W = Math.max(1, r.width); H = Math.max(1, r.height);
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  }
+  new ResizeObserver(resize).observe($('rollWrap'));
+  readColors();
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readColors);
+  new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] });
+
+  const LO = 34, HI = 86;
+  const ALPHA = { subject: 1, answer: 1, inversion: 1, subject2: 0.5, motif: 0.78, cs: 0.62, pedal: 0.4, free: 0.3 };
+  const STRONG = { subject: 1, answer: 1, inversion: 1, subject2: 1 };
+
+  function sectionLabel(s) {
+    if (s.type === 'episode') return 'Episode → ' + E.keyName(s.to);
+    if (s.type === 'entry' && s.group === 'exposition2') return s.title;
+    return s.title || s.type;
+  }
+
+  function draw() {
+    tick(); // backstop in case the worker timer never fires
+    const cur = currentStep();
+    updateText(cur);
+    g2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g2.clearRect(0, 0, W, H);
+    g2.fillStyle = colors.roll;
+    g2.fillRect(0, 0, W, H);
+
+    const top = 30, bottom = 12, left = 34;
+    const row = (H - top - bottom) / (HI - LO);
+    const px = Math.max(4.5, (W - left) / 104);
+    const visible = (W - left) / px;
+    let viewStart;
+    if (reduceMotion.matches) {
+      const page = Math.floor(visible * 0.75);
+      viewStart = Math.floor(Math.max(0, cur) / page) * page - visible * 0.08;
+    } else {
+      viewStart = cur - visible * 0.62;
+    }
+    const nowX = left + (cur - viewStart) * px;
+    const X = (s) => left + (s - viewStart) * px;
+    const Y = (m) => top + (HI - m) * row;
+
+    g2.font = '500 10px "IBM Plex Mono", ui-monospace, monospace';
+    g2.textBaseline = 'middle';
+    for (let m = 36; m <= HI; m += 12) {
+      const y = Y(m) + row / 2;
+      g2.fillStyle = colors.grid;
+      g2.fillRect(left, y, W - left, 1);
+      g2.fillStyle = colors.muted;
+      g2.fillText('C' + (m / 12 - 1), 8, y);
+    }
+    const firstBar = Math.ceil(viewStart / 16) * 16;
+    g2.fillStyle = colors.grid;
+    for (let s = firstBar; s < viewStart + visible; s += 16) g2.fillRect(X(s), top - 6, 1, H - top - bottom + 6);
+
+    g2.textBaseline = 'alphabetic';
+    for (const b of blocks) {
+      if (b.start + b.len < viewStart || b.start > viewStart + visible) continue;
+      const x = X(b.start);
+      g2.fillStyle = colors.rule;
+      g2.fillRect(x, 6, 1, H - 6 - bottom);
+      g2.fillStyle = b.start > cur ? colors.muted : colors.ink;
+      g2.font = '500 10.5px "IBM Plex Mono", ui-monospace, monospace';
+      const maxW = b.len * px - 12;
+      if (maxW > 30) {
+        let text = sectionLabel(b.sec).toUpperCase();
+        if (g2.measureText(text).width > maxW) {
+          while (text.length > 1 && g2.measureText(text + '…').width > maxW) text = text.slice(0, -1);
+          text = text.trimEnd() + '…';
+        }
+        g2.fillText(text, Math.max(x + 6, left + 4), 18);
+      }
+    }
+
+    const rh = Math.max(2.5, row * 0.86);
+    for (const n of notes) {
+      const end = n.start + n.dur;
+      if (end < viewStart || n.start > viewStart + visible) continue;
+      const x = X(n.start), w = Math.max(1.5, n.dur * px - 1.5), y = Y(n.midi) + (row - rh) / 2;
+      const strong = !!STRONG[n.tag];
+      let a = ALPHA[n.tag] || 0.3;
+      const future = n.start > cur, sounding = n.start <= cur && end > cur;
+      if (audio.muted[n.voice]) a *= 0.25;
+      if (future) a *= 0.45;
+      const hh = strong ? rh * 1.25 : rh, yy = strong ? y - rh * 0.125 : y;
+      g2.globalAlpha = a;
+      g2.fillStyle = colors.voice[n.voice];
+      g2.fillRect(x, yy, w, hh);
+      if (n.tag === 'subject2') {
+        g2.globalAlpha = future ? 0.5 : 1;
+        g2.strokeStyle = colors.voice[n.voice];
+        g2.lineWidth = 1.5;
+        g2.strokeRect(x + 0.75, yy + 0.75, Math.max(0.5, w - 1.5), Math.max(0.5, hh - 1.5));
+      }
+      if (sounding && !audio.muted[n.voice]) {
+        g2.globalAlpha = Math.min(1, a + 0.35);
+        g2.fillRect(x - 1, yy - 1.5, w + 2, hh + 3);
+      }
+    }
+    g2.globalAlpha = 1;
+
+    g2.fillStyle = colors.ink;
+    g2.fillRect(Math.round(nowX), 26, 1.5, H - 26 - bottom + 6);
+    if (!started) {
+      g2.font = 'italic 22px "IM Fell English", Georgia, serif';
+      g2.textAlign = 'right';
+      g2.fillStyle = colors.muted;
+      g2.fillText(fromLink ? 'A shared fugue waits to begin →' : 'The subject waits to enter →', nowX - 16, H / 2);
+      g2.font = '13px "Alegreya Sans", system-ui, sans-serif';
+      g2.fillText('Press Play. Each voice answers in turn.', nowX - 16, H / 2 + 24);
+      g2.textAlign = 'left';
+    }
+    requestAnimationFrame(draw);
+  }
+
+  // Compose the opening now, so the page shows the first subject before anything plays.
+  generateThrough(AHEAD);
+  resize();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { shown = null; });
+  requestAnimationFrame(draw);
+})();
+</script>
