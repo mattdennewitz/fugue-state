@@ -66,6 +66,21 @@ function run(stream, fugues, opts) {
     if (s.type === 'cadence' && b.notes.some((p) => p.tag === 'free' && (p.start + p.dur - 2) % 4 === 0 && p.start < p.start + p.dur - 2 &&
       b.notes.some((q) => q.voice === p.voice && q.start === p.start + p.dur && (p.midi - q.midi === 1 || p.midi - q.midi === 2)))) bump('suspension:cadence-block');
     for (const n of b.notes) {
+      if (n.orn) {
+        bump('orn:' + n.orn.type);
+        const subs = E.ornamentSteps(n, b, 60 / b.bpm / 4);
+        if (subs) {
+          let at = 0, ok = true;
+          for (const p of subs) {
+            if (Math.abs(p.at - at) > 1e-9 || p.dur <= 0) ok = false;
+            at = p.at + p.dur;
+            if (n.orn.type === 'tirata') { if (p !== subs[0] && !(p.midi < n.orn.target && n.orn.target - p.midi <= 12)) ok = false; }
+            else if (Math.abs(p.midi - n.midi) > 2) ok = false;
+          }
+          if (Math.abs(at - n.dur) > 1e-9) ok = false;
+          if (!ok) { stats.badOrn = (stats.badOrn || 0) + 1; if (stats.badOrn < 3) console.log('  bad ornament', JSON.stringify({ orn: n.orn, dur: n.dur, midi: n.midi, subs })); }
+        }
+      }
       if (![n.midi, n.start, n.dur].every(Number.isFinite) || n.dur <= 0) { stats.bad++; continue; }
       const V = E.VOICES[n.voice];
       if (n.midi < V.lo - 5 || n.midi > V.hi + 5) stats.out++;
@@ -102,7 +117,7 @@ let thrown = 0;
 for (let i = 0; i < 50; i++) {
   try {
     const st = run(new E.FugueStream({ seed: 1000 + i * 7919 }), 6, { chaos: i % 2 === 1 });
-    for (const k of ['steps', 'gaps', 'bad', 'out', 'parallels', 'crossings', 'errors']) total[k] += st[k];
+    for (const k of ['steps', 'gaps', 'bad', 'out', 'parallels', 'crossings', 'errors', 'badOrn']) total[k] = (total[k] || 0) + (st[k] || 0);
     for (const [k, v] of Object.entries(st.cover)) total.cover[k] = (total.cover[k] || 0) + v;
   } catch (e) { thrown++; console.log('  seed', 1000 + i * 7919, e.stack); }
 }
@@ -115,7 +130,8 @@ const parRate = total.steps / Math.max(1, total.parallels);
 check('voice leading: parallel 5ths/8ves at most 1 per 400 steps', parRate >= 400, `1 per ${Math.round(parRate)} steps`);
 const crossRate = total.crossings / total.steps;
 check('voice leading: crossings under 1% of voice-pair steps', crossRate < 0.01, (crossRate * 100).toFixed(2) + '%');
-const need = ['entry:subject', 'entry:answer', 'entry:inversion', 'entry:augmentation', 'entry:diminution', 'entry:subject2', 'entry:combined',
+check('ornaments: every expansion fills its note exactly with neighbouring pitches', !total.badOrn, `${total.badOrn || 0} bad`);
+const need = ['orn:trill', 'orn:mordent', 'orn:prall', 'orn:turn', 'orn:tirata', 'entry:subject', 'entry:answer', 'entry:inversion', 'entry:augmentation', 'entry:diminution', 'entry:subject2', 'entry:combined',
   'episode', 'dompedal', 'stretto', 'stretto:three', 'stretto:inverted', 'cadence', 'cadence:pivot', 'fugue:double', 'fugue:single', 'voices:3', 'voices:4', 'answer:tonal'];
 const missing = need.filter((k) => !(total.cover[k] >= 3));
 const sus = total.cover.suspension || 0, cadB = total.cover['suspension:cadence-block'] || 0, cads = total.cover.cadence || 1;
@@ -129,7 +145,8 @@ try {
 } catch (e) { check('depth: 200 fugues', false, e.message); }
 
 // 3. Determinism: a fugue reached mid-stream equals the same fugue started from its token.
-const norm = (blocks) => JSON.stringify(blocks.map((b) => [b.len, b.sec.title, b.notes.map((n) => [n.start - blocks[0].start, n.dur, n.midi, n.voice, n.tag])]));
+const norm = (blocks) => JSON.stringify(blocks.map((b) => [b.len, b.sec.title, b.notes.map((n) => [n.start - blocks[0].start, n.dur, n.midi, n.voice, n.tag, n.orn ? n.orn.type : '',
+  E.expression(n, b, 1.1).toFixed(6), E.timing(n, b, 1.1).dt.toFixed(7), E.rubato(b, n.start, 1.1).toFixed(6)])]));
 let detOk = 0;
 for (let i = 0; i < 6; i++) {
   const a = new E.FugueStream({ seed: 77 + i });
@@ -141,7 +158,28 @@ for (let i = 0; i < 6; i++) {
   if (norm(A) === norm(B)) detOk++;
   else console.log('  mismatch for token', token);
 }
-check('determinism: token replays the fugue note for note', detOk === 6, `${detOk}/6`);
+check('determinism: a token replays the fugue note for note, ornaments and performance included', detOk === 6, `${detOk}/6`);
+
+// Ornamented subjects: every statement carries the same ornament on the same note.
+{
+  let fugues = 0, consistent = 0;
+  for (let i = 0; i < 12; i++) {
+    const s3 = new E.FugueStream({ seed: 500 + i }), fg = s3.fugue, seen = {};
+    let ok = true;
+    while (s3.fugue === fg) {
+      const b = s3.next();
+      if (b.sec.type === 'entry' && b.sec.form === 'diminution') continue;
+      for (const n of b.notes) {
+        if (n.si == null || !['subject', 'answer'].includes(n.tag) || n.dur < 2) continue;
+        if (n.orn && n.orn.type !== 'mordent' && n.orn.type !== 'prall') continue; // a cadential trill may take a subject note
+        const t = n.orn ? n.orn.type : '-';
+        if (seen[n.si] == null) seen[n.si] = t; else if (seen[n.si] !== t) ok = false;
+      }
+    }
+    if (Object.values(seen).some((t) => t !== '-')) { fugues++; if (ok) consistent++; }
+  }
+  check('ornaments: an ornamented subject keeps its ornament in every entry', fugues > 0 && consistent === fugues, `${consistent}/${fugues} ornamented subjects`);
+}
 
 // 4. Tokens round-trip; junk is rejected.
 let tokOk = true;

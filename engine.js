@@ -665,6 +665,8 @@
   // Seeded by the fugue, so a replayed fugue is also played the same way. amount: 0 = strict.
   const unitHash = (seed, k) => hash2(seed >>> 0, k | 0) / 4294967296;
   const seedOf = (b) => (b && b.fugue && b.fugue.params ? b.fugue.params.seed : 0);
+  // Positions count from the fugue's first step, so a fugue opened from a link plays identically.
+  const relStep = (n, b) => n.start - ((b && b.fstart) || 0);
   const SUBJECT_TAGS = { subject: 1, answer: 1, inversion: 1, subject2: 1 };
   const SECTION_SHADE = { episode: -0.06, dompedal: 0.05, stretto: 0.06, cadence: 0.03 };
 
@@ -677,7 +679,7 @@
     const contour = (n.midi - center(n.voice)) * 0.004;
     const held = n.dur >= 8 ? 0.03 : 0;
     const shade = SECTION_SHADE[b.sec && b.sec.type] || 0;
-    const wobble = (unitHash(seedOf(b), n.start * 8 + n.voice + 7) - 0.5) * 0.06;
+    const wobble = (unitHash(seedOf(b), relStep(n, b) * 8 + n.voice + 7) - 0.5) * 0.06;
     return Math.max(0.6, Math.min(1.4, 1 + amount * (metric + arch + contour + held + shade + wobble)));
   }
 
@@ -685,7 +687,7 @@
   // intonation drift (cents).
   function timing(n, b, amount) {
     if (!amount) return { dt: 0, gate: 1, cents: 0 };
-    const seed = seedOf(b), k = n.start * 8 + n.voice;
+    const seed = seedOf(b), k = relStep(n, b) * 8 + n.voice;
     const jitter = (unitHash(seed, k) + unitHash(seed, k + 3) - 1) * 0.012;
     const lead = SUBJECT_TAGS[n.tag] ? -0.006 : n.voice === 3 ? -0.002 : 0;
     let g = 1;
@@ -707,18 +709,138 @@
   function rubato(b, step, amount) {
     if (!amount) return 1;
     const rel = step - b.start, L = b.len;
-    const ph = unitHash(seedOf(b), b.start) * 2 * Math.PI;
+    const ph = unitHash(seedOf(b), b.start - (b.fstart || 0)) * 2 * Math.PI;
     let f = 1 + 0.018 * amount * Math.sin((2 * Math.PI * rel) / 32 + ph);
     if (rel >= L - 4) f += 0.05 * amount * ((rel - (L - 4) + 1) / 4);
     if (b.sec && (b.sec.type === 'stretto' || b.sec.type === 'episode')) f -= 0.012 * amount;
     return f;
   }
 
+  // ---------- ornaments ----------
+  // Decorations a player adds around written notes. They don't change the counterpoint, so
+  // they're chosen after composition from a hash (the composition RNG is left untouched).
+  const MIRROR = { mordent: 'prall', prall: 'mordent' };
+
+  // Some subjects carry an ornament on a long head note; every entry then repeats it.
+  // A mordent dips below before rising motion, a short trill (Pralltriller) above before falling.
+  function subjectOrnaments(fg) {
+    if (fg._orn) return fg._orn;
+    const out = {}, seed = fg.params ? fg.params.seed : 0, S = fg.subject.notes;
+    if (unitHash(seed, 0x0a11) < 0.6) {
+      const cand = [];
+      S.forEach((n, i) => {
+        const nx = S[i + 1];
+        if (nx && nx.t === n.t + n.dur && (n.dur >= 6 || (n.dur >= 4 && n.t % 8 === 0))) cand.push(i);
+      });
+      cand.slice(0, unitHash(seed, 0x0a12) < 0.3 ? 2 : 1).forEach((i) => {
+        out[i] = S[i + 1].deg >= S[i].deg ? 'mordent' : 'prall';
+      });
+    }
+    fg._orn = out;
+    return out;
+  }
+
+  function assignOrnaments(b) {
+    const fg = b.fugue, sec = b.sec;
+    if (!fg || !fg.params || !b.harm) return;
+    const seed = hash2(fg.params.seed, 0x0b10 + b.secIdx);
+    const h = (k) => unitHash(seed, k);
+    const so = subjectOrnaments(fg);
+    const dim = sec.type === 'entry' && sec.form === 'diminution';
+    for (const n of b.notes) {
+      if (dim || n.si == null || n.dur < 2) continue;
+      if (n.tag !== 'subject' && n.tag !== 'answer' && n.tag !== 'inversion') continue;
+      const o = so[n.si];
+      if (o) n.orn = { type: n.tag === 'inversion' ? MIRROR[o] : o };
+    }
+    // Cadential trill: the highest voice holding a note over V that steps onto I.
+    const { units, unitLen: UL } = b.harm;
+    for (let u = 0; u + 1 < units.length; u++) {
+      const a = units[u], c = units[u + 1];
+      if (a.root !== 4 || c.root !== 0 || !sameKey(a.key, c.key)) continue;
+      const final = sec.type === 'cadence' && u + 1 === units.length - 1;
+      if (h(u) >= (final ? 0.95 : 0.45)) continue;
+      const t1 = b.start + (u + 1) * UL, t0 = t1 - UL;
+      let pick = null;
+      for (let v = 0; v < 4 && !pick; v++) {
+        const cands = b.notes.filter((n) => n.voice === v && !n.orn && n.start >= t0 && n.start + n.dur === t1 && n.dur >= 2 && n.leap != null && n.leap >= 1 && n.leap <= 2);
+        if (cands.length) pick = cands[cands.length - 1];
+      }
+      if (!pick) continue;
+      // At a fugue's last cadence, sometimes a rising run into the final chord instead.
+      pick.orn = final && h(u + 50) < 0.4 && pick.dur >= 4 ? { type: 'tirata', target: pick.nextMidi } : { type: 'trill' };
+    }
+    // Trailing turns on some long notes that move on by step.
+    for (const n of b.notes) {
+      if (n.orn || n.dur < 8 || n.leap == null || n.leap === 0 || n.leap > 2) continue;
+      if (n.tag !== 'free' && n.tag !== 'cs') continue;
+      if (h(1000 + (n.start - b.start) * 4 + n.voice) < 0.16) n.orn = { type: 'turn' };
+    }
+  }
+
+  const scalePcs = (key) => new Set(SCALES[key.mode].map((x) => mod(key.tonic + x, 12)));
+  // Upper neighbour from the key's scale; lower neighbour prefers the semitone (raised 7th in minor).
+  function neighbor(key, midi, dir) {
+    const pcs = scalePcs(key);
+    if (dir < 0 && key.mode === 'minor') pcs.add(mod(key.tonic + 11, 12));
+    for (let d = 1; d <= 2; d++) if (pcs.has(mod(midi + dir * d, 12))) return midi + dir * d;
+    return midi + dir * 2;
+  }
+
+  // Expand an ornamented note into the notes actually played, in steps from its start.
+  // sps: seconds per step, so ornaments run at a playable speed at any tempo.
+  function ornamentSteps(n, b, sps) {
+    const o = n.orn, key = (b && b.key) || (b && b.fugue && b.fugue.key);
+    if (!o || !key) return null;
+    const q = (x) => Math.round(x * 8) / 8;
+    const r = q(Math.min(0.5, Math.max(0.25, 0.09 / (sps || 0.25))));
+    const M = n.midi, D = n.dur, out = [];
+    const add = (at, dur, midi) => { if (dur > 1e-9) out.push({ at, dur, midi }); };
+    if (o.type === 'mordent' || o.type === 'prall') {
+      if (D < 3 * r) return null;
+      add(0, r, M); add(r, r, neighbor(key, M, o.type === 'mordent' ? -1 : 1)); add(2 * r, D - 2 * r, M);
+    } else if (o.type === 'turn') {
+      if (D < 4 * r + 1) return null;
+      const s = D - 4 * r;
+      add(0, s, M); add(s, r, neighbor(key, M, 1)); add(s + r, r, M); add(s + 2 * r, r, neighbor(key, M, -1)); add(s + 3 * r, r, M);
+    } else if (o.type === 'trill') {
+      // From the upper note, then a turned ending (Nachschlag) into the resolution.
+      const term = D >= 6 * r ? 2 * r : 0;
+      let k = Math.floor(Math.min(D - term, 12 * r) / r + 1e-9);
+      if (k % 2) k--;
+      if (k < 2) return null;
+      const U = neighbor(key, M, 1);
+      let at = 0;
+      for (let i = 0; i < k; i++) { add(at, r, i % 2 ? M : U); at += r; }
+      const hold = D - term - at;
+      if (hold > 1e-9) { out[out.length - 1].dur += hold; at += hold; }
+      if (term) { add(at, r, neighbor(key, M, -1)); add(at + r, r, M); }
+    } else if (o.type === 'tirata') {
+      if (o.target == null) return null;
+      const r2 = q(Math.min(0.375, Math.max(0.125, 0.055 / (sps || 0.25))));
+      const pcs = scalePcs(key);
+      if (key.mode === 'minor') { // melodic minor on the way up
+        pcs.delete(mod(key.tonic + 8, 12)); pcs.delete(mod(key.tonic + 10, 12));
+        pcs.add(mod(key.tonic + 9, 12)); pcs.add(mod(key.tonic + 11, 12));
+      }
+      const run = [];
+      for (let m = o.target - 1; run.length < 7 && m > o.target - 13; m--) if (pcs.has(mod(m, 12))) run.unshift(m);
+      let k = run.length;
+      while (k > 3 && D - k * r2 < 2 * r2) k--;
+      if (k < 3 || D - k * r2 < r2) return null;
+      const s = D - k * r2;
+      add(0, s, M);
+      run.slice(run.length - k).forEach((p, i) => add(s + i * r2, r2, p));
+    }
+    return out.length ? out : null;
+  }
+
   // ---------- block specs ----------
-  const shiftNotes = (notes, dt, ddeg, key, scale) => notes.map((n) => ({
-    t: (scale || 1) * n.t + dt, dur: (scale || 1) * n.dur, deg: n.deg + ddeg, key,
+  // si: the note's index in its source line, so the subject's ornaments follow it into every entry.
+  const shiftNotes = (notes, dt, ddeg, key, scale) => notes.map((n, i) => ({
+    t: (scale || 1) * n.t + dt, dur: (scale || 1) * n.dur, deg: n.deg + ddeg, key, si: i,
   }));
-  const invertNotes = (notes, a, shift, dt, key) => notes.map((n) => ({ t: n.t + dt, dur: n.dur, deg: 2 * a - n.deg + shift, key }));
+  const invertNotes = (notes, a, shift, dt, key) => notes.map((n, i) => ({ t: n.t + dt, dur: n.dur, deg: 2 * a - n.deg + shift, key, si: i }));
 
   function buildSpec(sec, fg, density) {
     const all = fg.voices;
@@ -1143,7 +1265,9 @@
       }
     }
     const out = [];
-    for (let v = 0; v < 4; v++) for (const n of lines[v]) out.push({ start: n.t, dur: n.dur, midi: n.midi, voice: v, tag: n.tag });
+    for (let v = 0; v < 4; v++) {
+      for (const n of lines[v]) out.push({ start: n.t, dur: n.dur, midi: n.midi, voice: v, tag: n.tag, si: n.si == null ? null : n.si });
+    }
     return out;
   }
 
@@ -1213,15 +1337,20 @@
       // For articulation: the interval to the next note in the same voice, when it follows directly.
       for (let v = 0; v < 4; v++) {
         const vn = block.notes.filter((n) => n.voice === v).sort((a, b) => a.start - b.start);
-        vn.forEach((n, i) => { const q = vn[i + 1]; n.leap = q && q.start === n.start + n.dur ? Math.abs(q.midi - n.midi) : null; });
+        vn.forEach((n, i) => {
+          const q = vn[i + 1];
+          n.leap = q && q.start === n.start + n.dur ? Math.abs(q.midi - n.midi) : null;
+          n.nextMidi = n.leap == null ? null : q.midi;
+        });
       }
+      try { assignOrnaments(block); } catch (e) { if (typeof console !== 'undefined') console.warn('ornaments skipped', e); }
       return block;
     }
     _compose() {
       const fg = this.fugue;
       if (this.secIdx >= fg.sections.length) throw new Error('ran past the plan');
       const sec = fg.sections[this.secIdx];
-      if (this.secIdx === 0) this.st = freshState();
+      if (this.secIdx === 0) { this.st = freshState(); this.fugueStart = this.step; }
       let nextFugue = null;
       if (sec.type === 'cadence') {
         const held = chordPCs(chord(sec.key, 0, { pic: sec.pic }));
@@ -1242,6 +1371,7 @@
       const block = {
         start: this.step, len: spec.len, bpm: fg.bpm, rit: sec.type === 'cadence', fugue: fg, secIdx: this.secIdx,
         sec, key: spec.key, notes: notes.map((n) => Object.assign(n, { start: n.start + this.step })),
+        harm: { units: spec.harmony, unitLen: spec.unitLen || 8 }, fstart: this.fugueStart,
       };
       this.step += spec.len;
       this.secIdx++;
@@ -1265,7 +1395,7 @@
       });
       this.st.sounding = [true, true, true, true];
       const sec = { type: 'cadence', key, title: 'Cadence' };
-      const block = { start: this.step, len: 32, bpm: (old && old.bpm) || 66, rit: true, fugue: old, secIdx: -1, sec, key, notes };
+      const block = { start: this.step, len: 32, bpm: (old && old.bpm) || 66, rit: true, fugue: old, secIdx: -1, sec, key, notes, fstart: this.step };
       this.step += 32;
       const seed = old && old.params ? hash2(old.params.seed, 0xfa11) : 7;
       this.fugue = this._plan({ seed, key });
@@ -1276,6 +1406,7 @@
 
   return {
     FugueStream, VOICES, keyName, CHARACTERS, tokenFor, parseToken, sectionLength, stepBpm, expression, timing, rubato,
+    subjectOrnaments, ornamentSteps,
     _internal: { planFugue, composeBlock, buildSpec, genSubject, genCS, harmonize, strettoOptions, realize, tonalAnswer, hash2 },
   };
 });

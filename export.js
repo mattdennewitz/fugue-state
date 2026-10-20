@@ -81,9 +81,13 @@
       for (const [n, b] of notes) {
         // dynamics follow the chosen feel; timing stays on the grid so notation imports cleanly
         const vel = Math.max(1, Math.min(127, Math.round((VELOCITY[n.tag] || 72) * E.expression(n, b, feel))));
-        // note-offs sort before note-ons on the same tick so repeated pitches re-strike
-        ev.push({ tick: T(n.start + n.dur), bytes: [0x80 | v, n.midi, 0], order: -1 });
-        ev.push({ tick: T(n.start), bytes: [0x90 | v, n.midi, vel], order: order++ });
+        // ornaments are written out as the notes a player would play
+        const subs = opts.ornaments === false ? null : E.ornamentSteps(n, b, 60 / b.bpm / 4);
+        for (const [j, p] of (subs || [{ at: 0, dur: n.dur, midi: n.midi }]).entries()) {
+          // note-offs sort before note-ons on the same tick so repeated pitches re-strike
+          ev.push({ tick: T(n.start + p.at + p.dur), bytes: [0x80 | v, p.midi, 0], order: -1 });
+          ev.push({ tick: T(n.start + p.at), bytes: [0x90 | v, p.midi, j ? Math.max(1, Math.round(vel * 0.88)) : vel], order: order++ });
+        }
       }
       tracks.push(track(ev));
     }
@@ -158,6 +162,14 @@
     const first = blocks[0].notes.filter((n) => n.tag === 'subject').sort((a, b) => a.start - b.start);
     lines.push('Subject: ' + first.map((n) => noteName(n.midi)).join(' '));
     if (fg.answer) lines.push('The answer is tonal: its opening dominant is answered by the tonic.');
+    const so = E.subjectOrnaments(fg), names = { mordent: 'a mordent', prall: 'a short trill (Pralltriller)' };
+    const marks = Object.entries(so).map(([i, t]) => `${names[t]} on note ${+i + 1}`);
+    if (marks.length) lines.push(`The subject carries ${marks.join(' and ')}, repeated in every entry.`);
+    const count = {};
+    for (const b of blocks) for (const n of b.notes) if (n.orn && n.orn.type !== 'mordent' && n.orn.type !== 'prall') count[n.orn.type] = (count[n.orn.type] || 0) + 1;
+    const label = { trill: 'cadential trill', turn: 'turn', tirata: 'closing run' };
+    const parts = Object.entries(count).map(([t, c]) => `${c} ${label[t]}${c > 1 ? 's' : ''}`);
+    if (parts.length) lines.push('Ornaments: ' + parts.join(', ') + '.');
     lines.push('');
     lines.push('Form');
     for (const b of blocks) {

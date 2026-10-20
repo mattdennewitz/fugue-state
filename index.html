@@ -118,6 +118,8 @@
   .vt[aria-pressed="false"] .nm { text-decoration: line-through; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .spacer { flex: 1 1 auto; }
+  .toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; cursor: pointer; }
+  .toggle input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
 
   .steer { flex: 1 1 520px; min-width: 0; border: 1px solid var(--rule); border-radius: 10px; background: var(--roll); }
   .steer summary { cursor: pointer; padding: 10px 14px; font-weight: 500; list-style-position: inside; }
@@ -189,6 +191,7 @@
         <label title="More shaping, more breath"><input type="radio" name="feel" id="feel-expressive" value="expressive">Expressive</label>
       </span>
     </span>
+    <label class="toggle" for="ornaments" title="Trills, mordents, turns and closing runs where a Baroque player would add them"><input type="checkbox" id="ornaments" checked>Ornaments</label>
     <span class="spacer"></span>
     <div class="choice" role="radiogroup" aria-label="Instrument">
       <label><input type="radio" name="inst" id="inst-organ" value="organ">Organ</label>
@@ -282,6 +285,12 @@
 
   let tempoMult = 1;
   const FEEL = { strict: 0, human: 0.6, expressive: 1.1 };
+  let ornamentsOn = true;
+  // Expanded ornament, cached on the note (speed depends on tempo, so drop the cache when it moves).
+  const orn = (n, b) => {
+    if (n._ornFor !== tempoMult) { n._ornSubs = E.ornamentSteps(n, b, secPerStep(n.start)); n._ornFor = tempoMult; }
+    return n._ornSubs;
+  };
   let feel = FEEL.human;
   const secPerStep = (step) => { const b = blockAt(step); return (60 / (E.stepBpm(b, step) * tempoMult) / 4) * E.rubato(b, step, feel); };
 
@@ -504,7 +513,15 @@
           const tm = E.timing(n, b, feel);
           const shape = 1 + (E.expression(n, b, feel) - 1) * DYNAMIC_RANGE[audio.inst];
           const t = Math.max(now + 0.005, sched.nextTime + tm.dt + (roll ? rank * 0.011 * feel : 0));
-          audio.note(n.voice, n.midi, t, d * tm.gate, (VEL[n.tag] || 0.7) * shape, tm.cents);
+          const vel = (VEL[n.tag] || 0.7) * shape;
+          const subs = ornamentsOn && n.orn ? orn(n, b) : null;
+          if (!subs) { audio.note(n.voice, n.midi, t, d * tm.gate, vel, tm.cents); return; }
+          // Ornament notes run at real-time speed; the last one carries the note's own articulation.
+          const sp = d / n.dur;
+          subs.forEach((o, j) => {
+            const last = j === subs.length - 1;
+            audio.note(n.voice, o.midi, t + o.at * sp, last ? d * tm.gate - o.at * sp : o.dur * sp * 1.02, j ? vel * 0.88 : vel, tm.cents);
+          });
         });
         byStep.delete(step);
       }
@@ -616,6 +633,9 @@
   bindRadios('room', audio.room, (v) => audio.setRoom(v));
   if (prefs.feel && FEEL[prefs.feel] != null) feel = FEEL[prefs.feel];
   bindRadios('feel', prefs.feel || 'human', (v) => { feel = FEEL[v]; });
+  const ornBox = $('ornaments');
+  if (prefs.ornaments === false) { ornamentsOn = false; ornBox.checked = false; }
+  ornBox.addEventListener('change', () => { ornamentsOn = ornBox.checked; prefs.ornaments = ornamentsOn; savePrefs(); });
 
   const voiceWrap = $('voices');
   VOICES.forEach((v, i) => {
@@ -732,7 +752,7 @@
   $('saveMidi').addEventListener('click', () => {
     const fg = heardFugue();
     try {
-      const out = X.fugueZip(E, fg.token, { instrument: audio.inst, link: linkFor(fg), feel });
+      const out = X.fugueZip(E, fg.token, { instrument: audio.inst, link: linkFor(fg), feel, ornaments: ornamentsOn });
       saveFile(out.filename, new Blob([out.data], { type: 'application/zip' }));
     } catch (e) {
       say('Could not write the MIDI file: ' + (e && e.message));
@@ -962,14 +982,26 @@
       const hh = strong ? rh * 1.25 : rh, yy = strong ? y - rh * 0.125 : y;
       g2.globalAlpha = a;
       g2.fillStyle = colors.voice[n.voice];
-      g2.fillRect(x, yy, w, hh);
+      const subs = ornamentsOn && n.orn ? orn(n, blockAt(n.start)) : null;
+      if (subs) {
+        // draw the ornament as played: quick neighbour notes, then the written note
+        for (const o of subs) {
+          const ox = X(n.start + o.at), ow = Math.max(1, o.dur * px - (o.dur < 1 ? 0.5 : 1.5));
+          const oy = Y(o.midi) + (row - rh) / 2, small = o.midi !== n.midi;
+          g2.fillRect(ox, small ? oy + rh * 0.2 : yy, ow, small ? rh * 0.6 : hh);
+        }
+        if (n.orn.type === 'trill' && w > 14) {
+          g2.font = 'italic 11px "IM Fell English", Georgia, serif';
+          g2.fillText('tr', x, yy - 3);
+        }
+      } else g2.fillRect(x, yy, w, hh);
       if (n.tag === 'subject2') {
         g2.globalAlpha = future ? 0.5 : 1;
         g2.strokeStyle = colors.voice[n.voice];
         g2.lineWidth = 1.5;
         g2.strokeRect(x + 0.75, yy + 0.75, Math.max(0.5, w - 1.5), Math.max(0.5, hh - 1.5));
       }
-      if (sounding && !audio.muted[n.voice]) {
+      if (sounding && !audio.muted[n.voice] && !subs) {
         g2.globalAlpha = Math.min(1, a + 0.35);
         g2.fillRect(x - 1, yy - 1.5, w + 2, hh + 3);
       }
